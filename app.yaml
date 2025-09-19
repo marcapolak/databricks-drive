@@ -1,0 +1,14 @@
+command:
+  - "streamlit"
+  - "run"
+  - "google_drive_prototype.py"
+
+env:
+- name: "DATABRICKS_HOST"
+  value: "databricks-drive-1444828305810485.aws.databricksapps.com"
+- name: "DATABRICKS_TOKEN"
+  value: "YOUR_DATABRICKS_TOKEN_HERE"
+- name: "STREAMLIT_SERVER_HEADLESS"
+  value: "true"
+- name: "STREAMLIT_BROWSER_GATHER_USAGE_STATS"
+  value: "false"

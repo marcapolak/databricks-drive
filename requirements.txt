@@ -1,0 +1,11 @@
+streamlit
+pandas
+numpy
+pathlib2
+python-docx
+openpyxl
+PyPDF2
+pillow
+requests
+python-dotenv
+python-dateutil
