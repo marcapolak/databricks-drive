@@ -1,34 +1,31 @@
 from dotenv import load_dotenv
+from super_agent.agent import SuperAgent, search_files_tool, summarize_file_tool, move_file_tool
+from openai import OpenAI
 import os
-
-load_dotenv()  # Load from .env
-
-DATABRICKS_HOST = os.getenv("DATABRICKS_HOST")
-DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
-
-"""
-Google Drive-like File Manager Prototype for Databricks
-Demonstrates accessible file management for unstructured data
-"""
-
 import streamlit as st
 import pandas as pd
-import os
-from datetime import datetime
 from pathlib import Path
 import tempfile
-import io
-import json
 
-# Configure the page to look like Google Drive
-st.set_page_config(
-    page_title="Databricks Drive",
-    page_icon="📁",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+load_dotenv()
+
+DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
+
+DATABRICKS_BASE_URL = "https://e2-demo-field-eng.cloud.databricks.com/serving-endpoints"
+
+db_client = OpenAI(
+    api_key=DATABRICKS_TOKEN,
+    base_url=DATABRICKS_BASE_URL
 )
 
-# Google Drive-like CSS styling
+# Initialize SuperAgent and register tools
+agent = SuperAgent()
+agent.register_tool("search_files", search_files_tool, "Search files by keyword")
+agent.register_tool("summarize_file", summarize_file_tool, "Summarize a given file")
+agent.register_tool("move_file", move_file_tool, "Move a file to a folder")
+agent.set_llm(db_client)
+
+# CSS styling for Google Drive-like UI
 st.markdown("""
 <style>
     .main-header {
@@ -150,23 +147,19 @@ st.markdown("""
 
 class GoogleDriveInterface:
     def __init__(self):
-        # Initialize session state
         if 'current_path' not in st.session_state:
             st.session_state.current_path = "My Drive"
         if 'view_mode' not in st.session_state:
             st.session_state.view_mode = "grid"
         if 'selected_files' not in st.session_state:
             st.session_state.selected_files = []
+        if 'demo_files' not in st.session_state:
+            self.init_demo_data()
         
-        # Create base storage directory
         self.storage_path = Path(tempfile.gettempdir()) / "databricks_drive"
         self.storage_path.mkdir(exist_ok=True)
-        
-        # Initialize with demo data if empty
-        self.init_demo_data()
     
     def init_demo_data(self):
-        """Initialize with sample files for demo"""
         demo_files = [
             ("📊 Sales Report Q3.xlsx", "Excel file • 2.3 MB • 3 days ago"),
             ("📝 Project Proposal.docx", "Word document • 1.1 MB • 1 week ago"),
@@ -175,12 +168,9 @@ class GoogleDriveInterface:
             ("🖼️ Product Images", "Folder • 15 items • 1 month ago"),
             ("📁 Financial Reports", "Folder • 8 items • 2 months ago"),
         ]
-        
-        if 'demo_files' not in st.session_state:
-            st.session_state.demo_files = demo_files
+        st.session_state.demo_files = demo_files
     
     def get_file_icon(self, filename):
-        """Get appropriate icon for file type"""
         if filename.endswith('Folder') or 'Folder' in filename:
             return "📁"
         elif any(ext in filename.lower() for ext in ['.xlsx', '.xls']):
@@ -197,7 +187,6 @@ class GoogleDriveInterface:
             return "📄"
     
     def render_header(self):
-        """Render Google Drive-like header"""
         st.markdown("""
         <div class="main-header">
             <div class="drive-logo">
@@ -211,11 +200,9 @@ class GoogleDriveInterface:
         """, unsafe_allow_html=True)
     
     def render_toolbar(self):
-        """Render toolbar with actions"""
         col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
         
         with col1:
-            # Upload button
             uploaded_files = st.file_uploader(
                 "📤 Upload files",
                 accept_multiple_files=True,
@@ -241,7 +228,6 @@ class GoogleDriveInterface:
                 st.session_state.search_term = search_term
     
     def render_breadcrumb(self):
-        """Render breadcrumb navigation"""
         breadcrumb_html = f"""
         <div class="breadcrumb">
             <span>📁 {st.session_state.current_path}</span>
@@ -250,13 +236,11 @@ class GoogleDriveInterface:
         st.markdown(breadcrumb_html, unsafe_allow_html=True)
     
     def render_file_grid(self):
-        """Render files in grid view"""
         files = st.session_state.demo_files
         
         if hasattr(st.session_state, 'search_term'):
             files = [f for f in files if st.session_state.search_term.lower() in f[0].lower()]
         
-        # Grid layout
         cols_per_row = 4
         for i in range(0, len(files), cols_per_row):
             cols = st.columns(cols_per_row)
@@ -266,7 +250,6 @@ class GoogleDriveInterface:
                         filename, metadata = file_info
                         icon = self.get_file_icon(filename)
                         
-                        # File card
                         card_html = f"""
                         <div class="file-card">
                             <div class="file-icon">{icon}</div>
@@ -276,13 +259,12 @@ class GoogleDriveInterface:
                         """
                         st.markdown(card_html, unsafe_allow_html=True)
                         
-                        # Action buttons
                         col_a, col_b = st.columns(2)
                         with col_a:
                             if st.button("Open", key=f"open_{i}_{j}"):
                                 if "Folder" in filename:
                                     st.session_state.current_path = filename
-                                    st.rerun()
+                                    st.experimental_rerun()
                                 else:
                                     st.info(f"Opening {filename}")
                         
@@ -291,13 +273,11 @@ class GoogleDriveInterface:
                                 st.session_state.show_context_menu = f"{i}_{j}"
     
     def render_file_list(self):
-        """Render files in list view"""
         files = st.session_state.demo_files
         
         if hasattr(st.session_state, 'search_term'):
             files = [f for f in files if st.session_state.search_term.lower() in f[0].lower()]
         
-        # Create DataFrame for list view
         file_data = []
         for filename, metadata in files:
             icon = self.get_file_icon(filename)
@@ -310,7 +290,6 @@ class GoogleDriveInterface:
         
         df = pd.DataFrame(file_data)
         
-        # Display as table
         st.dataframe(
             df,
             use_container_width=True,
@@ -324,7 +303,6 @@ class GoogleDriveInterface:
         )
     
     def render_upload_area(self):
-        """Render drag & drop upload area"""
         st.markdown("""
         <div class="upload-area">
             <h3>📤 Drag files here to upload</h3>
@@ -336,7 +314,6 @@ class GoogleDriveInterface:
         """, unsafe_allow_html=True)
     
     def render_stats_bar(self):
-        """Render statistics bar"""
         total_files = len([f for f in st.session_state.demo_files if not "Folder" in f[0]])
         total_folders = len([f for f in st.session_state.demo_files if "Folder" in f[0]])
         
@@ -350,7 +327,6 @@ class GoogleDriveInterface:
         st.markdown(stats_html, unsafe_allow_html=True)
     
     def render_context_menu(self):
-        """Render context menu for file actions"""
         if hasattr(st.session_state, 'show_context_menu'):
             with st.sidebar:
                 st.subheader("File Actions")
@@ -366,31 +342,29 @@ class GoogleDriveInterface:
                     st.info("File details would show")
 
 def main():
-    # Initialize the interface
-    drive = GoogleDriveInterface()
+    st.set_page_config(
+        page_title="Databricks Drive",
+        page_icon="📁",
+        layout="wide",
+        initial_sidebar_state="collapsed"
+    )
     
-    # Render components
+    drive = GoogleDriveInterface()
     drive.render_header()
     drive.render_toolbar()
     drive.render_breadcrumb()
     
-    # Main content area
     if st.session_state.view_mode == "grid":
         drive.render_file_grid()
     else:
         drive.render_file_list()
     
-    # Upload area (only show if no files or in empty state)
     if len(st.session_state.demo_files) == 0:
         drive.render_upload_area()
     
-    # Stats bar
     drive.render_stats_bar()
-    
-    # Context menu
     drive.render_context_menu()
     
-    # Demo information
     st.markdown("---")
     st.markdown("""
     ### 🎯 **Databricks Drive Prototype Demo**
@@ -409,6 +383,22 @@ def main():
     - ✅ **Improved Productivity** - Easy file operations and collaboration
     - ✅ **Reduced Complexity** - No need to learn new tools
     """)
+
+    # --- AI Agent section ---
+    st.markdown("---")
+    st.markdown("### 🤖 Ask a question to **SuperAgent**")
+
+    query = st.text_input("🧠 Ask a question about your data, files, or workflow:")
+
+    if query:
+        with st.spinner("Thinking..."):
+            try:
+                answer = agent.ask(query)  # Use agent.ask here!
+                st.success(answer)
+            except Exception as e:
+                st.error(f"Agent failed: {str(e)}")
+ 
+
 
 if __name__ == "__main__":
     main()

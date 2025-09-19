@@ -9,3 +9,4 @@ pillow
 requests
 python-dotenv
 python-dateutil
+databricks-sdk
