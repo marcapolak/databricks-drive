@@ -1,404 +1,215 @@
 from dotenv import load_dotenv
-from super_agent.agent import SuperAgent, search_files_tool, summarize_file_tool, move_file_tool
-from openai import OpenAI
 import os
 import streamlit as st
-import pandas as pd
+from functools import partial
 from pathlib import Path
 import tempfile
+import pandas as pd
+from super_agent.agent import (
+    SuperAgent, search_files_tool, summarize_file_tool, move_file_tool,
+    load_metadata, create_folder, delete_file
+)
+from openai import OpenAI
+from datetime import datetime
 
 load_dotenv()
-
 DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
-
 DATABRICKS_BASE_URL = "https://e2-demo-field-eng.cloud.databricks.com/serving-endpoints"
 
-db_client = OpenAI(
-    api_key=DATABRICKS_TOKEN,
-    base_url=DATABRICKS_BASE_URL
-)
+STORAGE_PATH = Path(tempfile.gettempdir()) / "databricks_drive_files"
+STORAGE_PATH.mkdir(exist_ok=True)
+os.environ["DRIVE_STORAGE_PATH"] = str(STORAGE_PATH)
 
-# Initialize SuperAgent and register tools
+db_client = OpenAI(api_key=DATABRICKS_TOKEN, base_url=DATABRICKS_BASE_URL)
 agent = SuperAgent()
-agent.register_tool("search_files", search_files_tool, "Search files by keyword")
-agent.register_tool("summarize_file", summarize_file_tool, "Summarize a given file")
-agent.register_tool("move_file", move_file_tool, "Move a file to a folder")
 agent.set_llm(db_client)
+agent.register_tool("search_files", search_files_tool, "Search files")
+agent.register_tool("summarize_file", partial(summarize_file_tool, llm=agent.llm), "Summarize file with AI")
+agent.register_tool("move_file", move_file_tool, "Move file")
 
-# CSS styling for Google Drive-like UI
+st.set_page_config(page_title="Databricks Drive", page_icon="📁", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
 <style>
-    .main-header {
-        background: #1a73e8;
-        color: white;
-        padding: 0.5rem 1rem;
-        border-radius: 8px;
-        margin-bottom: 1rem;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-    }
-    
-    .drive-logo {
-        font-size: 1.5rem;
-        font-weight: bold;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-    
-    .toolbar {
-        background: #f8f9fa;
-        padding: 1rem;
-        border-radius: 8px;
-        margin-bottom: 1rem;
-        border: 1px solid #e0e0e0;
-    }
-    
-    .file-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        gap: 1rem;
-        margin: 1rem 0;
-    }
-    
-    .file-card {
-        background: white;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        padding: 1rem;
-        text-align: center;
-        transition: all 0.2s ease;
-        cursor: pointer;
-    }
-    
-    .file-card:hover {
-        border-color: #1a73e8;
-        box-shadow: 0 2px 8px rgba(26, 115, 232, 0.1);
-    }
-    
-    .file-icon {
-        font-size: 3rem;
-        margin-bottom: 0.5rem;
-    }
-    
-    .file-name {
-        font-weight: 500;
-        color: #202124;
-        margin-bottom: 0.25rem;
-        word-break: break-word;
-    }
-    
-    .file-meta {
-        font-size: 0.8rem;
-        color: #5f6368;
-    }
-    
-    .breadcrumb {
-        background: #f8f9fa;
-        padding: 0.5rem 1rem;
-        border-radius: 4px;
-        margin-bottom: 1rem;
-        font-size: 0.9rem;
-    }
-    
-    .upload-area {
-        border: 2px dashed #dadce0;
-        border-radius: 8px;
-        padding: 2rem;
-        text-align: center;
-        background: #fafbfc;
-        margin: 1rem 0;
-    }
-    
-    .stats-bar {
-        background: #f8f9fa;
-        padding: 0.5rem 1rem;
-        border-radius: 4px;
-        margin-top: 1rem;
-        border: 1px solid #e0e0e0;
-    }
-    
-    .action-button {
-        background: #1a73e8;
-        color: white;
-        border: none;
-        padding: 0.5rem 1rem;
-        border-radius: 4px;
-        cursor: pointer;
-        margin: 0.25rem;
-    }
-    
-    .action-button:hover {
-        background: #1557b0;
-    }
-    
-    .secondary-button {
-        background: white;
-        color: #1a73e8;
-        border: 1px solid #dadce0;
-        padding: 0.5rem 1rem;
-        border-radius: 4px;
-        cursor: pointer;
-        margin: 0.25rem;
-    }
+ .main-header { background: #1a73e8; color: white; padding: 0.5rem 1rem; border-radius: 8px; margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; }
+ .drive-logo { font-size: 1.5rem; font-weight: bold; display: flex; align-items: center; gap: 0.5rem; }
+ .stats-bar { background: #f8f9fa; padding: 0.5rem 1rem; border-radius: 4px; margin-top: 1rem; border: 1px solid #e0e0e0; }
+ .breadcrumb { background: #f8f9fa; padding: 0.5rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
 </style>
 """, unsafe_allow_html=True)
 
-class GoogleDriveInterface:
-    def __init__(self):
-        if 'current_path' not in st.session_state:
-            st.session_state.current_path = "My Drive"
-        if 'view_mode' not in st.session_state:
-            st.session_state.view_mode = "grid"
-        if 'selected_files' not in st.session_state:
-            st.session_state.selected_files = []
-        if 'demo_files' not in st.session_state:
-            self.init_demo_data()
-        
-        self.storage_path = Path(tempfile.gettempdir()) / "databricks_drive"
-        self.storage_path.mkdir(exist_ok=True)
-    
-    def init_demo_data(self):
-        demo_files = [
-            ("📊 Sales Report Q3.xlsx", "Excel file • 2.3 MB • 3 days ago"),
-            ("📝 Project Proposal.docx", "Word document • 1.1 MB • 1 week ago"),
-            ("📊 Customer Data.csv", "CSV file • 850 KB • 2 weeks ago"),
-            ("📄 Contract.pdf", "PDF • 4.2 MB • 3 weeks ago"),
-            ("🖼️ Product Images", "Folder • 15 items • 1 month ago"),
-            ("📁 Financial Reports", "Folder • 8 items • 2 months ago"),
-        ]
-        st.session_state.demo_files = demo_files
-    
-    def get_file_icon(self, filename):
-        if filename.endswith('Folder') or 'Folder' in filename:
-            return "📁"
-        elif any(ext in filename.lower() for ext in ['.xlsx', '.xls']):
-            return "📊"
-        elif any(ext in filename.lower() for ext in ['.docx', '.doc']):
-            return "📝"
-        elif '.csv' in filename.lower():
-            return "📋"
-        elif '.pdf' in filename.lower():
-            return "📄"
-        elif any(ext in filename.lower() for ext in ['.png', '.jpg', '.jpeg']):
-            return "🖼️"
-        else:
-            return "📄"
-    
-    def render_header(self):
-        st.markdown("""
-        <div class="main-header">
-            <div class="drive-logo">
-                <span>📁</span>
-                <span>Databricks Drive</span>
-            </div>
-            <div>
-                <span style="font-size: 0.9rem;">Unstructured Data Management Platform</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    def render_toolbar(self):
-        col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
-        
-        with col1:
-            uploaded_files = st.file_uploader(
-                "📤 Upload files",
-                accept_multiple_files=True,
-                type=['xlsx', 'xls', 'docx', 'doc', 'pdf', 'csv', 'txt', 'png', 'jpg'],
-                key="file_uploader"
-            )
-            
-            if uploaded_files:
-                for file in uploaded_files:
-                    st.success(f"✅ Uploaded: {file.name}")
-        
-        with col2:
-            if st.button("📁 New Folder"):
-                st.session_state.show_new_folder = True
-        
-        with col3:
-            view_mode = st.selectbox("View", ["Grid", "List"], key="view_selector")
-            st.session_state.view_mode = view_mode.lower()
-        
-        with col4:
-            search_term = st.text_input("🔍 Search files", placeholder="Search in Drive")
-            if search_term:
-                st.session_state.search_term = search_term
-    
-    def render_breadcrumb(self):
-        breadcrumb_html = f"""
-        <div class="breadcrumb">
-            <span>📁 {st.session_state.current_path}</span>
-        </div>
-        """
-        st.markdown(breadcrumb_html, unsafe_allow_html=True)
-    
-    def render_file_grid(self):
-        files = st.session_state.demo_files
-        
-        if hasattr(st.session_state, 'search_term'):
-            files = [f for f in files if st.session_state.search_term.lower() in f[0].lower()]
-        
-        cols_per_row = 4
-        for i in range(0, len(files), cols_per_row):
-            cols = st.columns(cols_per_row)
-            for j, file_info in enumerate(files[i:i+cols_per_row]):
-                if j < len(cols):
-                    with cols[j]:
-                        filename, metadata = file_info
-                        icon = self.get_file_icon(filename)
-                        
-                        card_html = f"""
-                        <div class="file-card">
-                            <div class="file-icon">{icon}</div>
-                            <div class="file-name">{filename}</div>
-                            <div class="file-meta">{metadata}</div>
-                        </div>
-                        """
-                        st.markdown(card_html, unsafe_allow_html=True)
-                        
-                        col_a, col_b = st.columns(2)
-                        with col_a:
-                            if st.button("Open", key=f"open_{i}_{j}"):
-                                if "Folder" in filename:
-                                    st.session_state.current_path = filename
-                                    st.experimental_rerun()
-                                else:
-                                    st.info(f"Opening {filename}")
-                        
-                        with col_b:
-                            if st.button("⋮", key=f"menu_{i}_{j}"):
-                                st.session_state.show_context_menu = f"{i}_{j}"
-    
-    def render_file_list(self):
-        files = st.session_state.demo_files
-        
-        if hasattr(st.session_state, 'search_term'):
-            files = [f for f in files if st.session_state.search_term.lower() in f[0].lower()]
-        
-        file_data = []
-        for filename, metadata in files:
-            icon = self.get_file_icon(filename)
-            file_data.append({
-                'Icon': icon,
-                'Name': filename,
-                'Details': metadata,
-                'Actions': '⋮'
-            })
-        
-        df = pd.DataFrame(file_data)
-        
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Icon": st.column_config.TextColumn("", width="small"),
-                "Name": st.column_config.TextColumn("Name", width="large"),
-                "Details": st.column_config.TextColumn("Details", width="medium"),
-                "Actions": st.column_config.TextColumn("", width="small")
-            }
-        )
-    
-    def render_upload_area(self):
-        st.markdown("""
-        <div class="upload-area">
-            <h3>📤 Drag files here to upload</h3>
-            <p>Or use the upload button above</p>
-            <p style="font-size: 0.8rem; color: #5f6368;">
-                Supports: Excel, Word, PDF, CSV, Images and more
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    def render_stats_bar(self):
-        total_files = len([f for f in st.session_state.demo_files if not "Folder" in f[0]])
-        total_folders = len([f for f in st.session_state.demo_files if "Folder" in f[0]])
-        
-        stats_html = f"""
-        <div class="stats-bar">
-            <span>📁 {total_folders} folders</span> • 
-            <span>📄 {total_files} files</span> • 
-            <span>💾 15.7 GB used of 100 GB</span>
-        </div>
-        """
-        st.markdown(stats_html, unsafe_allow_html=True)
-    
-    def render_context_menu(self):
-        if hasattr(st.session_state, 'show_context_menu'):
-            with st.sidebar:
-                st.subheader("File Actions")
-                if st.button("📥 Download"):
-                    st.success("Download started!")
-                if st.button("✏️ Rename"):
-                    st.info("Rename dialog would open")
-                if st.button("📋 Make a copy"):
-                    st.info("File copied!")
-                if st.button("🗑️ Move to trash"):
-                    st.warning("File moved to trash")
-                if st.button("ℹ️ File information"):
-                    st.info("File details would show")
+def list_folder_content(folder):
+    meta = load_metadata()
+    children = meta["folders"][folder]["children"]
+    files, folders = [], []
+    for name in children:
+        if name in meta["files"]:
+            files.append((name, meta["files"][name]))
+        elif name in meta["folders"]:
+            folders.append((name, meta["folders"][name]))
+    return folders, files
 
-def main():
-    st.set_page_config(
-        page_title="Databricks Drive",
-        page_icon="📁",
-        layout="wide",
-        initial_sidebar_state="collapsed"
+def upload_files(files, parent):
+    meta = load_metadata()
+    for file in files:
+        path = STORAGE_PATH / file.name
+        with open(path, "wb") as f:
+            f.write(file.getbuffer())
+        size = path.stat().st_size
+        upload_time = datetime.now().isoformat()
+        meta["files"][file.name] = {
+            "path": str(path),
+            "size": size,
+            "created": upload_time,
+            "modified": upload_time,
+            "parent": parent,
+        }
+        if file.name not in meta["folders"][parent]["children"]:
+            meta["folders"][parent]["children"].append(file.name)
+    save_metadata(meta)
+
+def get_current_folder():
+    return st.session_state.get("current_path", "My Drive")
+
+def set_current_folder(folder):
+    st.session_state["current_path"] = folder
+
+def file_icon(filename):
+    ext = filename.lower()
+    if ext.endswith(".xlsx") or ext.endswith(".xls"):
+        return "📊"
+    if ext.endswith(".docx") or ext.endswith(".doc"):
+        return "📝"
+    if ext.endswith(".csv"):
+        return "📋"
+    if ext.endswith(".pdf"):
+        return "📄"
+    if ext.endswith(".png") or ext.endswith(".jpg") or ext.endswith(".jpeg"):
+        return "🖼️"
+    return "📄"
+
+def render_main():
+    st.markdown(
+        "<div class='main-header'>"
+        "<div class='drive-logo'><span>📁</span> <span>Databricks Drive</span></div>"
+        "<div><span style='font-size:0.9rem;'>Unstructured Data Management Platform</span></div></div>",
+        unsafe_allow_html=True
     )
-    
-    drive = GoogleDriveInterface()
-    drive.render_header()
-    drive.render_toolbar()
-    drive.render_breadcrumb()
-    
-    if st.session_state.view_mode == "grid":
-        drive.render_file_grid()
+
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
+    with col1:
+        uploaded = st.file_uploader("📤 Upload files", accept_multiple_files=True,
+            type=['xlsx', 'xls', 'docx', 'doc', 'pdf', 'csv', 'txt', 'png', 'jpg'],
+            key="file_uploader")
+        if uploaded:
+            upload_files(uploaded, get_current_folder())
+            st.success("Uploaded files!")
+
+    with col2:
+        if st.button("📁 New Folder"):
+            st.session_state["show_new_folder"] = True
+
+    with col3:
+        view_mode = st.selectbox("View", ["Grid", "List"], key="view_selector")
+        st.session_state["view_mode"] = view_mode.lower()
+
+    with col4:
+        search_term = st.text_input("🔍 Search files", placeholder="Search in Drive")
+        st.session_state["search_term"] = search_term
+
+    if st.session_state.get("show_new_folder"):
+        folder_name = st.text_input("Folder name:")
+        if st.button("Create"):
+            ok, msg = create_folder(folder_name, get_current_folder())
+            st.success(msg) if ok else st.error(msg)
+            st.session_state["show_new_folder"] = False
+
+    bc_left, bc_right = st.columns([4,1])
+    with bc_left:
+        st.markdown(f"<div class='breadcrumb'><span>📁 {get_current_folder()}</span></div>", unsafe_allow_html=True)
+    with bc_right:
+        pass  # Only per-file summaries
+
+    folders, files = list_folder_content(get_current_folder())
+    if st.session_state.get("search_term"):
+        files = [(f, d) for f, d in files if st.session_state["search_term"].lower() in f.lower()]
+
+    st.divider()
+    if st.session_state.get("view_mode", "grid") == "grid":
+        cols_per_row = 3
+        items = folders + files
+        for i in range(0, len(items), cols_per_row):
+            cols = st.columns(cols_per_row)
+            for j, item in enumerate(items[i:i+cols_per_row]):
+                if isinstance(item[1], dict) and "children" in item[1]:
+                    with cols[j]:
+                        if st.button(f"📁 {item[0]}", key=f"folder_{item[0]}"):
+                            set_current_folder(item[0])
+                            st.experimental_rerun()
+                        st.caption("Folder")
+                elif isinstance(item[1], dict):
+                    with cols[j]:
+                        if st.button(f"{file_icon(item[0])} {item[0]}", key=f"file_{item[0]}"):
+                            st.session_state["selected_file"] = item[0]
+                        st.caption(f"{item[1]['size'] / 1024:.1f} KB, {item[1]['created'][:10]}")
     else:
-        drive.render_file_list()
-    
-    if len(st.session_state.demo_files) == 0:
-        drive.render_upload_area()
-    
-    drive.render_stats_bar()
-    drive.render_context_menu()
-    
-    st.markdown("---")
-    st.markdown("""
-    ### 🎯 **Databricks Drive Prototype Demo**
-    
-    **Key Features Demonstrated:**
-    - 📁 **Familiar Interface** - Google Drive-like experience
-    - 📤 **File Upload** - Support for Excel, Word, PDF, CSV files
-    - 🔍 **Search & Filter** - Find files quickly
-    - 📊 **File Preview** - View file contents without downloading
-    - 📁 **Folder Organization** - Organize files in folders
-    - 👥 **Collaboration** - Share and collaborate on files
-    
-    **Business Impact:**
-    - ✅ **Increased Adoption** - Familiar interface reduces training time
-    - ✅ **Better Data Management** - Organized access to unstructured data
-    - ✅ **Improved Productivity** - Easy file operations and collaboration
-    - ✅ **Reduced Complexity** - No need to learn new tools
-    """)
+        data = []
+        for f, d in folders:
+            data.append({"Type": "Folder", "Name": f, "Size": "-", "Date": d.get("created", "-")[:10]})
+        for f, d in files:
+            data.append({"Type": "File", "Name": f, "Size": f"{d['size']//1024} KB", "Date": d["created"][:10]})
+        st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True)
 
-    # --- AI Agent section ---
-    st.markdown("---")
-    st.markdown("### 🤖 Ask a question to **SuperAgent**")
+    st.divider()
+    # --- PDF: Single Summarize & Download Button ---
+    if st.session_state.get("selected_file"):
+        selected = st.session_state["selected_file"]
+        meta = load_metadata()
+        path = meta["files"][selected]["path"]
+        st.markdown(f"#### Preview: {selected}")
+        ext = selected.lower()
+        if ext.endswith(('.txt', '.csv')):
+            content = Path(path).read_text(encoding="utf-8")
+            st.text_area("Contents", content[:2000], height=200)
+        elif ext.endswith(('.png', '.jpg', '.jpeg')):
+            st.image(path)
+        elif ext.endswith('.pdf'):
+            if st.button("📑 Summarize & Download PDF"):
+                with st.spinner("Analyzing PDF and generating summary..."):
+                    summary = agent.tools["summarize_file"]["func"](selected)
+                    st.info(summary)
+                    with open(path, "rb") as f:
+                        st.download_button("⬇ Download PDF", f, selected, mime="application/pdf")
+        else:
+            st.write("Preview not supported. Download instead.")
 
-    query = st.text_input("🧠 Ask a question about your data, files, or workflow:")
+    st.divider()
+    st.markdown(
+        "<div class='stats-bar'>"
+        f"<span>📁 {len(folders)} folders</span> • "
+        f"<span>📄 {len(files)} files</span> • "
+        f"<span>💾 Storage: {sum([f[1]['size'] for f in files]) / 1024:.1f} KB"
+        "</span></div>", unsafe_allow_html=True
+    )
+    st.divider()
 
-    if query:
-        with st.spinner("Thinking..."):
-            try:
-                answer = agent.ask(query)  # Use agent.ask here!
-                st.success(answer)
-            except Exception as e:
-                st.error(f"Agent failed: {str(e)}")
- 
-
+    if st.session_state.get("show_context_menu"):
+        fname = st.session_state["show_context_menu"]
+        meta = load_metadata()
+        folders_list = [f for f in meta["folders"].keys() if f != meta["files"][fname]["parent"]]
+        st.sidebar.header(f"Actions: {fname}")
+        dest = st.sidebar.selectbox("Move to folder:", folders_list)
+        if st.sidebar.button("Move"):
+            st.sidebar.info(move_file_tool(fname, dest))
+            st.session_state.pop("show_context_menu")
+            st.experimental_rerun()
+    st.divider()
+    with st.expander("🤖 SuperAgent Assistant"):
+        inp = st.text_input("Ask a question...", placeholder="e.g. How many PDFs are in My Drive?")
+        if inp:
+            with st.spinner("Thinking..."):
+                st.success(agent.ask(inp))
 
 if __name__ == "__main__":
-    main()
+    if "current_path" not in st.session_state:
+        st.session_state["current_path"] = "My Drive"
+    render_main()
