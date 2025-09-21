@@ -10,11 +10,11 @@ from collections import defaultdict
 
 from super_agent.agent import (
     SuperAgent, search_files_tool, summarize_file_tool, move_file_tool,
-    load_metadata, save_metadata, create_folder
+    load_metadata, save_metadata, create_folder, delete_file
 )
 from openai import OpenAI
 
-# ---- STATIC DEMO FILES/FOLDERS ----
+# --- Static demo files/folders, always shown in UI, never deletable, never summarized ---
 ASSETS_DIR = Path(__file__).parent / "assets"
 STATIC_DEMO_FILES = [
     {"name": "📊 Sales Report Q3.xlsx", "description": "Excel file • 2.3 MB • 3 days ago", "type": "file"},
@@ -123,6 +123,39 @@ def upload_files(files, parent):
     save_metadata(meta)
     st.session_state.pop("summary_output", None)
 
+def get_all_files_in_folder(foldername):
+    meta = load_metadata()
+    result = set()
+    def _collect(fol):
+        for child in meta["folders"][fol]["children"]:
+            if child in meta["files"]:
+                result.add(child)
+            elif child in meta["folders"]:
+                _collect(child)
+    if foldername in meta["folders"]:
+        _collect(foldername)
+    return result
+
+def delete_folder(foldername):
+    meta = load_metadata()
+    if foldername in STATIC_DEMO_FOLDER_SET or foldername == "My Drive":
+        return False, "Demo/root folders cannot be deleted."
+    if foldername not in meta["folders"]:
+        return False, "Folder not found."
+    folder = meta["folders"][foldername]
+    children = list(folder["children"])
+    for child in children:
+        if child in meta["files"]:
+            delete_file(child)
+        elif child in meta["folders"]:
+            delete_folder(child)
+    parent = folder.get("parent")
+    if parent and foldername in meta["folders"][parent]["children"]:
+        meta["folders"][parent]["children"].remove(foldername)
+    del meta["folders"][foldername]
+    save_metadata(meta)
+    return True, f"Folder '{foldername}' (and all its content) deleted."
+
 def merged_file_folder_count_stats(folder, static_files, user_files, user_folders):
     FILETYPE_MAP = {
         ".xlsx": "Excel", ".xls": "Excel",
@@ -146,6 +179,7 @@ def merged_file_folder_count_stats(folder, static_files, user_files, user_folder
 def main():
     if "current_path" not in st.session_state:
         st.session_state["current_path"] = "My Drive"
+
     st.markdown("""
     <div class="main-header">
         <div class="drive-logo">
@@ -178,6 +212,7 @@ def main():
         f"<div class='breadcrumb'><span>📁 {get_current_folder()}</span></div>",
         unsafe_allow_html=True
     )
+
     if st.session_state.get("show_new_folder"):
         folder_name = st.text_input("Folder name:")
         if st.button("Create"):
@@ -194,7 +229,6 @@ def main():
         file_items = [item for item in file_items if search_term.lower() in item["name"].lower()]
 
     st.divider()
-    # --- File grid including Summarize AI; NO DELETE buttons ---
     if st.session_state.get("view_mode", "grid") == "grid":
         cols_per_row = 4
         for i in range(0, len(file_items), cols_per_row):
@@ -211,7 +245,7 @@ def main():
                     </div>
                     """
                     st.markdown(card_html, unsafe_allow_html=True)
-                    col_a, col_b = st.columns(2)
+                    col_a, col_b, col_c = st.columns(3)
                     with col_a:
                         if st.button("Open", key=f"open_{i}_{j}"):
                             st.info(f"Opening {name}")
@@ -225,6 +259,27 @@ def main():
                                     with st.spinner("Summarizing..."):
                                         summary = agent.tools["summarize_file"]["func"](name)
                                         st.session_state["summary_output"] = {"filename": name, "summary": summary}
+                    with col_c:
+                        # Robust delete: pop all relevant state, rerun immediately, nothing after...
+                        if not is_demo and item.get("type") == "file":
+                            if st.button("🗑️ Delete", key=f"delete_{i}_{j}"):
+                                delete_file(name)
+                                st.session_state.pop("summary_output", None)
+                                st.session_state.pop("selected_file", None)
+                                st.success(f"Deleted '{name}' from My Drive.")
+                                st.experimental_rerun()
+                                return
+                        if not is_demo and item.get("type") == "folder" and name != "My Drive":
+                            if st.button("🗑️ Delete Folder", key=f"delete_folder_{i}_{j}"):
+                                ok, msg = delete_folder(name)
+                                st.session_state.pop("summary_output", None)
+                                st.session_state.pop("selected_file", None)
+                                if ok:
+                                    st.success(msg)
+                                else:
+                                    st.error(msg)
+                                st.experimental_rerun()
+                                return
     else:
         rows = []
         for item in file_items:
@@ -237,6 +292,7 @@ def main():
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
     st.divider()
+    # --- File Preview ---
     if st.session_state.get("selected_file"):
         name = st.session_state["selected_file"]
         filemeta = None
@@ -257,10 +313,6 @@ def main():
                 elif ext.endswith(('.txt', '.csv')):
                     content = Path(path).read_text(encoding="utf-8", errors="replace")
                     st.text_area("Contents", content[:2000], height=200)
-                    if st.button("📑 Summarize this file with AI"):
-                        with st.spinner("Summarizing..."):
-                            summary = agent.tools["summarize_file"]["func"](name)
-                            st.session_state["summary_output"] = {"filename": name, "summary": summary}
                 elif ext.endswith('.pdf'):
                     with open(path, "rb") as f:
                         st.download_button("⬇ Download PDF", f, name, mime="application/pdf")
@@ -289,34 +341,23 @@ def main():
     """
     st.markdown(stats_html, unsafe_allow_html=True)
 
-    # Sidebar: AI summary
+    # --- Sidebar: AI summary
     if "summary_output" in st.session_state:
         so = st.session_state["summary_output"]
         with st.sidebar:
             st.subheader(f"AI Summary: {so['filename']}")
             st.info(so['summary'])
             if st.button("Clear summary"):
-                del st.session_state["summary_output"]
+                st.session_state.pop("summary_output", None)
 
     st.markdown("---")
     st.markdown("""
     ### 🎯 **Databricks Drive Prototype Demo**
-    
-    **Key Features Demonstrated:**
-    - 📁 **Familiar Interface** - Google Drive-like experience
-    - 📤 **File Upload** - Support for Excel, Word, PDF, CSV files
-    - 🔍 **Search & Filter** - Find files quickly
-    - 📊 **File Preview** - View file contents without downloading
-    - 📁 **Folder Organization** - Organize files in folders
-    - 👥 **Collaboration** - Share and collaborate on files
-    
-    **Business Impact:**
-    - ✅ **Increased Adoption** - Familiar interface reduces training time
-    - ✅ **Better Data Management** - Organized access to unstructured data
-    - ✅ **Improved Productivity** - Easy file operations and collaboration
-    - ✅ **Reduced Complexity** - No need to learn new tools
+    - 📁 Static demo files/folders always visible and protected
+    - 📤 Upload/manage your own files/folders, with recursive folder/file deletion
+    - 📑 AI summaries for uploads only, always in sidebar
+    - Q&A, robust persistent business workflow, Google Drive-style UI
     """)
-
 
     # --- Sidebar Q&A with live static+user counts
     with st.expander("🤖 SuperAgent Assistant (demo)"):
