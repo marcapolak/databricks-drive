@@ -301,11 +301,22 @@ def main():
     st.markdown("---")
     st.markdown("""
     ### 🎯 **Databricks Drive Prototype Demo**
-    - 📁 Static demo files/folders always visible and protected
-    - 📤 Upload/manage your own files/folders
-    - 📑 AI summaries for uploads only, always in sidebar
-    - Q&A, robust persistent business workflow, Google Drive-style UI
+    
+    **Key Features Demonstrated:**
+    - 📁 **Familiar Interface** - Google Drive-like experience
+    - 📤 **File Upload** - Support for Excel, Word, PDF, CSV files
+    - 🔍 **Search & Filter** - Find files quickly
+    - 📊 **File Preview** - View file contents without downloading
+    - 📁 **Folder Organization** - Organize files in folders
+    - 👥 **Collaboration** - Share and collaborate on files
+    
+    **Business Impact:**
+    - ✅ **Increased Adoption** - Familiar interface reduces training time
+    - ✅ **Better Data Management** - Organized access to unstructured data
+    - ✅ **Improved Productivity** - Easy file operations and collaboration
+    - ✅ **Reduced Complexity** - No need to learn new tools
     """)
+
 
     # --- Sidebar Q&A with live static+user counts
     with st.expander("🤖 SuperAgent Assistant (demo)"):
