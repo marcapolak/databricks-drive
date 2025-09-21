@@ -134,7 +134,7 @@ class SuperAgent:
         self.tools = {}
         self.llm = None
         token = databricks_token or os.environ.get('DATABRICKS_TOKEN')
-        endpoint = base_url or "https://e2-demo-field-eng.cloud.databricks.com/serving-endpoints/drive_superagent"
+        endpoint = base_url or "https://e2-demo-field-eng.cloud.databricks.com/serving-endpoints/drive_superagent/invocations"
         if token:
             self.llm = OpenAI(api_key=token, base_url=endpoint)
         else:
