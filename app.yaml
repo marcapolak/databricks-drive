@@ -1,13 +1,7 @@
 command:
-  - "streamlit"
-  - "run"
-  - "google_drive_prototype.py"
-env:
-  - name: "DATABRICKS_HOST"
-    value: "${DATABRICKS_HOST}"
-  - name: "DATABRICKS_TOKEN"
-    value: "${DATABRICKS_TOKEN}"
-  - name: "STREAMLIT_SERVER_HEADLESS"
-    value: "true"
-  - name: "STREAMLIT_BROWSER_GATHER_USAGE_STATS"
-    value: "false"
+- streamlit
+- run
+- google_drive_prototype.py
+
+
+
