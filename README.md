@@ -30,7 +30,7 @@ This repository contains a **Streamlit application** that offers a familiar, Goo
 
 ---
 
-## 🏗️ Repo Structure - TO DO -
+## 🏗️ Repo Structure
 
 
 ```plaintext
@@ -41,7 +41,7 @@ This repository contains a **Streamlit application** that offers a familiar, Goo
 ├── streamlit-google_drive_prototype.gif
 ├── super_agent
 │   ├── __init__.py
-│   └── agent.py
+    └── agent.py
 ```
 
 ## Authors and Contributors
