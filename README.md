@@ -4,9 +4,8 @@ This repository contains a **Streamlit application** that offers a familiar, Goo
 
 ---
 
-## 📽️ Demo Screencast
+## 📽️ Demo 
 
-> **Screencast:**
 ![Databricks Drive Demo](./streamlit-google_drive_prototype.gif)
 
 
