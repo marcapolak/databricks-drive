@@ -1,4 +1,4 @@
-# Databricks Drive – Google Drive-style File Manager (with AI Summarization)
+# Databricks Drive – Google Drive-style File Manager 
 
 This repository contains a **Streamlit application** that offers a familiar, Google Drive-inspired workflow for file organization, unstructured data management, and AI-powered insight—all in a single business demo UI.
 
@@ -49,7 +49,7 @@ This repository contains a **Streamlit application** that offers a familiar, Goo
 **Lead Author:**  
 - Daniel Velasquez Dahlin (Field Engineering, Senior Solutions Engineer)
 
-**Co-Authors / Contributors:**  
-- Karanveer Singh (Field Engineering, Senior Solutions Engineer)  
+**Co-Authors / Contributors:** 
 - Marcelina Polak (Field Engineering, Senior Solutions Engineer)
+- Karanveer Singh (Field Engineering, Senior Solutions Engineer)  
 
